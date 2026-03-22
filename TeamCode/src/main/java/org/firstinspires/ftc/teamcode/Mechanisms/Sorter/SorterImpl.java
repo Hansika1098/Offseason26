@@ -4,6 +4,9 @@ import com.qualcomm.robotcore.hardware.HardwareMap;
 
 import java.util.Arrays;
 
+import com.qualcomm.robotcore.hardware.DcMotor;
+
+import com.qualcomm.robotcore.hardware.DcMotor;
 /**
  * Skeleton implementation of {@link Sorter}.
  *
@@ -17,9 +20,13 @@ import java.util.Arrays;
  */
 public class SorterImpl implements Sorter {
 
+
+
     private static final int SLOT_COUNT = 3;
 
     private final HardwareMap hardwareMap;
+
+    private DcMotor spinnerMotor;
     private final LoadStationObserver loadStationObserver;
 
     private final SlotContent[] slots;
@@ -35,6 +42,21 @@ public class SorterImpl implements Sorter {
 
     private boolean slotPassActive;
     private int activePassSlot;
+
+    private int targetSlot = -1;
+    private double targetAngle = getAngleForSlot(targetSlot);
+
+    private static final double DEGREES_PER_TICK = 360.0 / TICKS_PER_REV;
+
+    private static final double TICKS_PER_REV = 0;// replac with the motors actual value
+
+
+
+
+
+    private final double DEGREES_PER_SLOT= 45.0
+
+            //idk the degrees lowk so i js put random number
 
     /**
      * Creates a sorter implementation using the default dual color sensor observer.
@@ -71,8 +93,15 @@ public class SorterImpl implements Sorter {
 
         this.slotPassActive = false;
         this.activePassSlot = -1;
+
+       //defining motor
+        spinnerMotor = hardwareMap.get(DcMotor.class, "spinnerMotor");
+        spinnerMotor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE); //stops when power 0
     }
 
+    private void setSpinnerPower(double power) {
+        spinnerMotor.setPower(power);
+    }
     /**
      * Runs one sorter loop.
      *
@@ -266,9 +295,22 @@ public class SorterImpl implements Sorter {
         }
         if (!isCalibrated()) {
             return CommandResult.REJECTED_NOT_CALIBRATED;
-        }
+        }//reject if slot is empty or unknown
         if (slots[slotIndex] == SlotContent.UNKNOWN || slots[slotIndex] == SlotContent.EMPTY) {
             return CommandResult.REJECTED_NOT_READY;
+
+            //set the target slot and target angle
+            targetSlot = slotIndex;
+
+            targetAngle = slotIndex * DEGREES_PER_SLOT;
+
+            //updates sorter state
+            action= SorterAction.PRESENTING_SLOT;
+
+            return CommandResult.ACCEPTED;
+
+
+
         }
 
         action = SorterAction.PRESENTING_SLOT;
@@ -365,8 +407,55 @@ public class SorterImpl implements Sorter {
      * Updates the action that moves a chosen slot to the shooter station.
      */
     private void updatePresentSlot() {
+
+        //work needed for this func:
+        //define target angle:
         // TODO: implement motion and completion rules for slot presentation.
+        //read the current angle fo spinner
+        if(targetSlot <0) return; //only runs if slot has been commanded
+
+        double currentAngle = getCurrentSpinnerAngle();//method below uses motor encoder to know encoder pos
+
+        //calculate the error  (distance from target)
+        double error = targetAngle - currentAngle;
+
+
+        if (Math.abs(error)<1.0) {
+            setSpinnerPower(0.0);
+            shootSlot = targetSlot;  //if distance to target less than  1 check these things
+            shootAligned = true;
+            targetSlot = -1;
+            action = SorterAction.IDLE;
+        }
+        else{
+            double power =0.3 * Math.signum (error);
+              setSpinnerPower(power);
+              //spin to target
+
+
+
+
+        }
+
+
+
     }
+
+    private double getAngleForSlot(int slotIndex) {
+        return slotIndex * 360.0 / SLOT_COUNT;
+    }
+
+
+
+
+    private double getCurrentSpinnerAngle() {
+        int ticks = spinnerMotor.getCurrentPosition();
+        return ticks * DEGREES_PER_TICK;
+    }
+
+
+
+
 
     /**
      * Updates the feed-cycle action.
