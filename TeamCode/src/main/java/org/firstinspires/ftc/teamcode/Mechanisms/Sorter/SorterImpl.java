@@ -45,18 +45,18 @@ public class SorterImpl implements Sorter {
 
     private int targetSlot = -1;
     private double targetAngle = getAngleForSlot(targetSlot);
-    private static final double TICKS_PER_REV = 0;// replace with the motors actual value
+
     private static final double DEGREES_PER_TICK = 360.0 / TICKS_PER_REV;
 
+    private static final double TICKS_PER_REV = 0;// replac with the motors actual value
 
 
 
 
 
-    private final double DEGREES_PER_SLOT= 45.0;
+    private final double DEGREES_PER_SLOT= 45.0
 
             //idk the degrees lowk so i js put random number
-    // i think its just 360/3 degrees (3 slots in a circle)
 
     /**
      * Creates a sorter implementation using the default dual color sensor observer.
@@ -295,9 +295,10 @@ public class SorterImpl implements Sorter {
         }
         if (!isCalibrated()) {
             return CommandResult.REJECTED_NOT_CALIBRATED;
-        }//reject if slot is empty or unknown
+        } //reject if slot is empty or unknown
         if (slots[slotIndex] == SlotContent.UNKNOWN || slots[slotIndex] == SlotContent.EMPTY) {
-//            return CommandResult.REJECTED_NOT_READY;
+            return CommandResult.REJECTED_NOT_READY;
+        }
 
             //set the target slot and target angle
             targetSlot = slotIndex;
@@ -305,16 +306,9 @@ public class SorterImpl implements Sorter {
             targetAngle = slotIndex * DEGREES_PER_SLOT;
 
             //updates sorter state
-            action= SorterAction.PRESENTING_SLOT;
+            action = SorterAction.PRESENTING_SLOT;
 
             return CommandResult.ACCEPTED;
-
-
-
-        }
-
-        action = SorterAction.PRESENTING_SLOT;
-        return CommandResult.ACCEPTED;
     }
 
     /**
@@ -384,6 +378,9 @@ public class SorterImpl implements Sorter {
      */
     private void updateCalibration() {
         // TODO: implement calibration state machine.
+
+
+
     }
 
     /**
@@ -464,6 +461,44 @@ public class SorterImpl implements Sorter {
      */
     private void updateFeedCycle() {
         // TODO: implement feed timing/state machine.
+
+            if (!isCalibrated()) {
+                setSpinnerPower(0.0);
+                action = SorterAction.IDLE;
+                return;
+            }
+
+            if (action != SorterAction.FEEDING) {
+                setSpinnerPower(0.0);
+                return;
+            }
+
+            if (shootSlot < 0) {
+                setSpinnerPower(0.0);
+                action = SorterAction.IDLE;
+                return;
+            }
+
+           //spinner sequencing
+
+            double targetAngle = shootSlot * DEGREES_PER_SLOT;
+            double currentAngle = getCurrentSpinnerAngle();
+
+            double error = targetAngle - currentAngle;
+
+            if (Math.abs(error) > 1.0) {
+                double power = 0.3 * Math.signum(error);
+                setSpinnerPower(power);
+                return;
+
+
+
+
+            action = SorterAction.IDLE;
+        }
+
+
+
     }
 
     /**
@@ -474,8 +509,40 @@ public class SorterImpl implements Sorter {
      * pass ends.
      */
     private void updateIdleObservation() {
+
+
+            if (!isCalibrated()) return;
+
+            double currentAngle = getCurrentSpinnerAngle();
+
+            // determines which slot is currently under the load station
+            int currentSlot = (int) Math.floor(currentAngle / DEGREES_PER_SLOT);
+
+            // Normalize slot index
+            currentSlot = ((currentSlot % SLOT_COUNT) + SLOT_COUNT) % SLOT_COUNT;
+
+
+            if (!slotPassActive) {
+
+                beginSlotPass(currentSlot);
+                return;
+            }
+
+
+            if (currentSlot == activePassSlot) {
+
+
+                return;
+            }
+
+
+            endSlotPass();
+
+
+            beginSlotPass(currentSlot);
+        }
         // TODO: implement passive read-pass handling during normal loading.
-    }
+
 
     /**
      * Returns whether at least one slot is currently known-empty.
