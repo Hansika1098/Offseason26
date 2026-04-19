@@ -414,7 +414,11 @@ import edu.ftcphoenix.fw.core.time.LoopClock;
     private double separatorOffsetAngle = 0.0;
 
         // TODO: implement calibration state machine.
-        private void updateCalibration() {
+
+        private void updateCalibration(){
+            return;
+        }
+        private void updateCalibration2() {
 
 
                 // must be in calibration flow
@@ -528,6 +532,7 @@ import edu.ftcphoenix.fw.core.time.LoopClock;
 
                 // safety fallback
                 setSpinnerPower(0.0);
+
 
 
 
