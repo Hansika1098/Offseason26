@@ -9,7 +9,7 @@ import edu.ftcphoenix.fw.core.time.LoopClock;
 import edu.ftcphoenix.fw.input.Gamepads;
 import edu.ftcphoenix.fw.input.binding.Bindings;
 
-@TeleOp(name = "Sorter: Full System Test", group = "Sorter")
+@TeleOp(name = "Sorter Test Teleop ", group = "Sorter")
 public final class sorterTestTeleop extends OpMode {
 
     private final LoopClock clock = new LoopClock();
