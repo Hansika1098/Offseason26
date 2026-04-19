@@ -1,12 +1,19 @@
 package org.firstinspires.ftc.teamcode.Mechanisms.Sorter;
 
+
+
 import com.qualcomm.robotcore.hardware.HardwareMap;
 
 import java.util.Arrays;
 
 import com.qualcomm.robotcore.hardware.DcMotor;
 
-import com.qualcomm.robotcore.hardware.DcMotor;
+import edu.ftcphoenix.fw.core.time.LoopClock;
+
+
+
+
+
 /**
  * Skeleton implementation of {@link Sorter}.
  *
@@ -17,10 +24,16 @@ import com.qualcomm.robotcore.hardware.DcMotor;
  * <p>The second collaborator object, {@link LoadStationObserver}, owns dual-sensor interpretation,
  * separator detection, read-window latching, and conversion of one slot pass into one
  * {@link SlotReadResult}.
+ *
+ *
+ *
  */
 
 
-public class SorterImpl implements Sorter {
+
+
+
+    public class SorterImpl implements Sorter {
 
 
 
@@ -33,11 +46,16 @@ public class SorterImpl implements Sorter {
 
     private final SlotContent[] slots;
 
+
     private CalibrationState calibrationState;
     private SorterAction action;
 
     private int loadSlot;
     private int shootSlot;
+
+
+    private LoopClock clock;
+
 
     private boolean loadAligned;
     private boolean shootAligned;
@@ -46,12 +64,11 @@ public class SorterImpl implements Sorter {
     private int activePassSlot;
 
     private int targetSlot = -1;
-    private double targetAngle = getAngleForSlot(targetSlot);
+    private double targetAngle = 0;
 
-        //private static final double DEGREES_PER_TICK = 360.0 / TICKS_PER_REV;
+    private static final double TICKS_PER_REV = 537.6;// replac with the motors actual value
 
-    private static final double TICKS_PER_REV = 0;// replac with the motors actual value
-
+    private static final double DEGREES_PER_TICK = 360.0 / TICKS_PER_REV;
 
 
 
@@ -60,11 +77,18 @@ public class SorterImpl implements Sorter {
 
             //idk the degrees lowk so i js put random number
 
+
+
+
+
+
     /**
      * Creates a sorter implementation using the default dual color sensor observer.
      *
      * @param hardwareMap FTC hardware map.
      */
+
+
     public SorterImpl(HardwareMap hardwareMap) {
         this(hardwareMap, new DualColorLoadStationObserver(hardwareMap));
     }
@@ -95,6 +119,8 @@ public class SorterImpl implements Sorter {
 
         this.slotPassActive = false;
         this.activePassSlot = -1;
+
+        this.clock = new LoopClock();
 
        //defining motor
         spinnerMotor = hardwareMap.get(DcMotor.class, "spinnerMotor");
@@ -157,8 +183,13 @@ public class SorterImpl implements Sorter {
         slotPassActive = false;
         activePassSlot = -1;
         loadStationObserver.reset();
+
+        loadAligned = false;
+        shootAligned = false;
         return CommandResult.ACCEPTED;
     }
+
+
 
     /**
      * Returns whether spinner geometry is currently trusted.
@@ -378,17 +409,120 @@ public class SorterImpl implements Sorter {
      *   <li>set {@link CalibrationState#CALIBRATED} and return to {@link SorterAction#IDLE}.
      * </ul>
      */
-    private void updateCalibration() {
+
+
+    private double separatorOffsetAngle = 0.0;
+
         // TODO: implement calibration state machine.
+        private void updateCalibration() {
+
+
+                // must be in calibration flow
+                if (calibrationState != CalibrationState.SEARCHING_SEPARATOR
+                        && calibrationState != CalibrationState.ALIGNING_REFERENCE) {
+                    setSpinnerPower(0.0);
+                    return;
+                }
+
+                double currentAngle = getCurrentSpinnerAngle();
+
+                // =========================
+                // 1. SEARCH FOR SEPARATOR
+                // =========================
+                if (calibrationState == CalibrationState.SEARCHING_SEPARATOR) {
+
+                    setSpinnerPower(0.25);
+
+                    SeparatorDetection detection =
+                            loadStationObserver.sampleForCalibration(clock);
+
+                    if (detection != null && detection.isSeparatorDetected()) {
+
+                        // lock reference angle
+                        separatorOffsetAngle = currentAngle;
+
+                        calibrationState = CalibrationState.ALIGNING_REFERENCE;
+                    }
+
+                    return;
+                }
+
+                // =========================
+                // 2. ALIGN TO SLOT CENTER
+                // =========================
+                if (calibrationState == CalibrationState.ALIGNING_REFERENCE) {
+
+                    setSpinnerPower(0.25);
+
+                    double normalizedAngle = currentAngle - separatorOffsetAngle;
+                    normalizedAngle = (normalizedAngle % 360 + 360) % 360;
+
+                    int estimatedSlot = (int) Math.floor(normalizedAngle / DEGREES_PER_SLOT);
+                    estimatedSlot = ((estimatedSlot % SLOT_COUNT) + SLOT_COUNT) % SLOT_COUNT;
+
+                    // find nearest EMPTY slot
+                    int bestSlot = -1;
+                    double bestError = Double.MAX_VALUE;
+
+                    for (int i = 0; i < SLOT_COUNT; i++) {
+
+                        if (slots[i] != SlotContent.EMPTY) continue;
+
+                        double slotAngle = i * DEGREES_PER_SLOT;
+                        double error = Math.abs(normalizedAngle - slotAngle);
+
+                        if (error > 180) error = 360 - error;
+
+                        if (error < bestError) {
+                            bestError = error;
+                            bestSlot = i;
+                        }
+                    }
+
+                    if (bestSlot == -1) {
+                        bestSlot = estimatedSlot;
+                    }
+
+                    // =========================
+                    // ALIGN TO EXACT CENTER
+                    // =========================
+                    double targetAngle = getAngleForSlot(bestSlot);
+
+                    double error = targetAngle - normalizedAngle;
+                    error = (error + 180) % 360 - 180;
+
+                    if (Math.abs(error) < 1.0) {
+
+                        // =========================
+                        // FINISH CALIBRATION
+                        // =========================
+                        loadSlot = bestSlot;
+                        shootSlot = (bestSlot + 1) % SLOT_COUNT;
+
+                        loadAligned = true;
+                        shootAligned = false;
+
+                        calibrationState = CalibrationState.CALIBRATED;
+                        action = SorterAction.IDLE;
+
+                        setSpinnerPower(0.0);
+
+                    } else {
+
+                        // keep rotating toward slot center
+                        setSpinnerPower(0.25 * Math.signum(error));
+                    }
+
+                    return;
+                }
+
+                // safety fallback
+                setSpinnerPower(0.0);
 
 
 
 
-
-
-
-
-    }
+       }
 
     /**
      * Updates the action that scans all slots through the load station.
@@ -524,7 +658,7 @@ public class SorterImpl implements Sorter {
 
     private double getCurrentSpinnerAngle() {
         int ticks = spinnerMotor.getCurrentPosition();
-        return ticks * DEGREES_PER_SLOT; //FIXXXXX its deegrees per tick but its mpt defimed
+        return ticks * DEGREES_PER_TICK; //FIXXXXX its deegrees per tick but its mpt defimed
     }
 
 
@@ -557,28 +691,25 @@ public class SorterImpl implements Sorter {
                 return;
             }
 
-           //spinner sequencing
-
-            double targetAngle = shootSlot * DEGREES_PER_SLOT;
             double currentAngle = getCurrentSpinnerAngle();
+            double targetAngle = getAngleForSlot(shootSlot);
 
             double error = targetAngle - currentAngle;
+            error = (error + 180) % 360 - 180;
 
+            // Phase 1: align to slot
             if (Math.abs(error) > 1.0) {
-                double power = 0.3 * Math.signum(error);
-                setSpinnerPower(power);
+                setSpinnerPower(0.3 * Math.signum(error));
                 return;
+            }
 
+            // Phase 2: push forward slightly to feed
+            setSpinnerPower(0.25);
 
-
-
-            //action = SorterAction.IDLE;
-        }
-
+            // stay in feeding until confirmShotComplete()
 
 
     }
-
     /**
      * Updates passive observation while the sorter is otherwise idle.
      *
@@ -588,36 +719,29 @@ public class SorterImpl implements Sorter {
      */
     private void updateIdleObservation() {
 
-
             if (!isCalibrated()) return;
 
             double currentAngle = getCurrentSpinnerAngle();
 
-            // determines which slot is currently under the load station
             int currentSlot = (int) Math.floor(currentAngle / DEGREES_PER_SLOT);
-
-            // Normalize slot index
             currentSlot = ((currentSlot % SLOT_COUNT) + SLOT_COUNT) % SLOT_COUNT;
 
-
+            // START PASS (no sampling yet)
             if (!slotPassActive) {
-
                 beginSlotPass(currentSlot);
                 return;
             }
 
-
+            // CONTINUE PASS (THIS is where sampling happens)
             if (currentSlot == activePassSlot) {
-
-
+                loadStationObserver.sampleSlotPass(clock);
                 return;
             }
 
-
+            // SWITCH SLOTw
             endSlotPass();
-
-
             beginSlotPass(currentSlot);
+
         }
         // TODO: implement passive read-pass handling during normal loading.
 
