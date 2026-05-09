@@ -35,6 +35,9 @@ public final class ObserverTeleop extends OpMode {
         bindings.onRise(gamepads.p1().a(), this::completeCurrentSlotAndAdvance);
         bindings.onRise(gamepads.p1().b(), this::resetTestSequence);
 
+        activeSlotIndex = FIRST_SLOT_INDEX;
+        observer.beginSlotPass(activeSlotIndex);
+
         telemetry.log().add("Observer test ready. Press START to begin slot testing.");
     }
 
@@ -68,7 +71,7 @@ public final class ObserverTeleop extends OpMode {
 
         telemetry.log().add(formatSlotResult(result));
 
-        activeSlotIndex = result.getSlotIndex() + 1;
+        activeSlotIndex = (activeSlotIndex + 1) % 3;
         observer.beginSlotPass(activeSlotIndex);
     }
 

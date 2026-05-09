@@ -10,6 +10,8 @@ import com.qualcomm.robotcore.hardware.DcMotor;
 
 import edu.ftcphoenix.fw.core.time.LoopClock;
 
+import com.qualcomm.robotcore.hardware.DcMotorSimple;
+
 
 
 
@@ -38,6 +40,8 @@ import edu.ftcphoenix.fw.core.time.LoopClock;
 
 
     private static final int SLOT_COUNT = 3;
+    private static final double LOAD_STATION_OFFSET_DEG = -35;
+    private static final double SHOOT_STATION_OFFSET_DEG = 145.0;
 
     private final HardwareMap hardwareMap;
 
@@ -66,7 +70,8 @@ import edu.ftcphoenix.fw.core.time.LoopClock;
     private int targetSlot = -1;
     private double targetAngle = 0;
 
-    private static final double TICKS_PER_REV = 537.6;// replac with the motors actual value
+
+    private static final double TICKS_PER_REV = 383.5;// replace with the motors actual value
 
     private static final double DEGREES_PER_TICK = 360.0 / TICKS_PER_REV;
 
@@ -76,6 +81,8 @@ import edu.ftcphoenix.fw.core.time.LoopClock;
     private final double DEGREES_PER_SLOT= 120.0;
 
             //idk the degrees lowk so i js put random number
+
+    private int completedScanPasses;
 
 
 
@@ -89,8 +96,8 @@ import edu.ftcphoenix.fw.core.time.LoopClock;
      */
 
 
-    public SorterImpl(HardwareMap hardwareMap) {
-        this(hardwareMap, new DualColorLoadStationObserver(hardwareMap));
+    public SorterImpl(HardwareMap hardwareMap, LoopClock clock) {
+        this(hardwareMap, new DualColorLoadStationObserver(hardwareMap), clock);
     }
 
     /**
@@ -102,9 +109,11 @@ import edu.ftcphoenix.fw.core.time.LoopClock;
      * @param hardwareMap FTC hardware map.
      * @param loadStationObserver collaborator that interprets the dual color sensors.
      */
-    SorterImpl(HardwareMap hardwareMap, LoadStationObserver loadStationObserver) {
+    SorterImpl(HardwareMap hardwareMap, LoadStationObserver loadStationObserver, LoopClock clock) {
         this.hardwareMap = hardwareMap;
         this.loadStationObserver = loadStationObserver;
+        this.clock = clock;
+
         this.slots = new SlotContent[SLOT_COUNT];
         Arrays.fill(this.slots, SlotContent.UNKNOWN);
 
@@ -120,11 +129,14 @@ import edu.ftcphoenix.fw.core.time.LoopClock;
         this.slotPassActive = false;
         this.activePassSlot = -1;
 
-        this.clock = new LoopClock();
+//        this.clock = new LoopClock();
 
        //defining motor
+        // spinnerMotor.setDirection(DcMotorSimple.Direction.REVERSE);
         spinnerMotor = hardwareMap.get(DcMotor.class, "spinnerMotor");
         spinnerMotor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE); //stops when power 0
+        spinnerMotor.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        spinnerMotor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
     }
 
     private void setSpinnerPower(double power) {
@@ -288,7 +300,13 @@ import edu.ftcphoenix.fw.core.time.LoopClock;
             return CommandResult.REJECTED_NOT_CALIBRATED;
         }
 
+        markInventoryUnknown();
+        slotPassActive = false;
+        activePassSlot = -1;
+        completedScanPasses = 0;
+        loadStationObserver.reset();
         action = SorterAction.INVENTORY_SCANNING;
+
         return CommandResult.ACCEPTED;
     }
 
@@ -297,6 +315,26 @@ import edu.ftcphoenix.fw.core.time.LoopClock;
      *
      * @return command acceptance or rejection.
      */
+
+    private double wrapDegrees(double angle) {
+        while (angle > 180.0) {
+            angle -= 360.0;
+        }
+        while (angle <= -180.0) {
+            angle += 360.0;
+        }
+        return angle;
+    }
+
+    private int findKnownEmptySlot() {
+        for (int i = 0; i < SLOT_COUNT; i++) {
+            if (slots[i] == SlotContent.EMPTY) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     @Override
     public CommandResult tryPrepareLoad() {
         if (action != SorterAction.IDLE) {
@@ -305,9 +343,13 @@ import edu.ftcphoenix.fw.core.time.LoopClock;
         if (!isCalibrated()) {
             return CommandResult.REJECTED_NOT_CALIBRATED;
         }
-        if (!hasKnownEmptySlot()) {
+        int emptySlot = findKnownEmptySlot();
+        if (emptySlot < 0) {
             return CommandResult.REJECTED_NO_EMPTY_SLOT;
         }
+
+        targetSlot = emptySlot;
+        targetAngle = getLoadAngleForSlot(emptySlot);
 
         action = SorterAction.PREPARING_LOAD;
         return CommandResult.ACCEPTED;
@@ -328,7 +370,7 @@ import edu.ftcphoenix.fw.core.time.LoopClock;
         }
         if (!isCalibrated()) {
             return CommandResult.REJECTED_NOT_CALIBRATED;
-        } //reject if slot is empty or unknown
+        } // reject if slot is empty or unknown
         if (slots[slotIndex] == SlotContent.UNKNOWN || slots[slotIndex] == SlotContent.EMPTY) {
             return CommandResult.REJECTED_NOT_READY;
         }
@@ -336,7 +378,7 @@ import edu.ftcphoenix.fw.core.time.LoopClock;
             //set the target slot and target angle
             targetSlot = slotIndex;
 
-            targetAngle = slotIndex * DEGREES_PER_SLOT;
+            targetAngle = getShootAngleForSlot(slotIndex);
 
             //updates sorter state
             action = SorterAction.PRESENTING_SLOT;
@@ -377,6 +419,10 @@ import edu.ftcphoenix.fw.core.time.LoopClock;
         if (shootSlot >= 0 && shootSlot < SLOT_COUNT) {
             slots[shootSlot] = SlotContent.EMPTY;
         }
+
+        setSpinnerPower(0.0);;
+        action = SorterAction.IDLE;
+        shootAligned = false;
     }
 
     /**
@@ -416,7 +462,19 @@ import edu.ftcphoenix.fw.core.time.LoopClock;
         // TODO: implement calibration state machine.
 
         private void updateCalibration(){
-            return;
+            setSpinnerPower(0.0);
+
+            spinnerMotor.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+            spinnerMotor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+
+            loadSlot = 0;
+            shootSlot = 1;
+
+            loadAligned = true;
+            shootAligned = false;
+
+            calibrationState = CalibrationState.CALIBRATED;
+            action = SorterAction.IDLE;
         }
         private void updateCalibration2() {
 
@@ -435,7 +493,7 @@ import edu.ftcphoenix.fw.core.time.LoopClock;
                 // =========================
                 if (calibrationState == CalibrationState.SEARCHING_SEPARATOR) {
 
-                    setSpinnerPower(0.25);
+                    setSpinnerPower(0.1);
 
                     SeparatorDetection detection =
                             loadStationObserver.sampleForCalibration(clock);
@@ -547,35 +605,47 @@ import edu.ftcphoenix.fw.core.time.LoopClock;
      */
     private void updateInventoryScan() {
 
-            // Safety: if we somehow lose calibration, stop immediately.
-            if (!isCalibrated()) {
-                setSpinnerPower(0.0);
-                action = SorterAction.IDLE;
-                return;
-            }
+        // Safety: if we somehow lose calibration, stop immediately.
+        if (!isCalibrated()) {
+            setSpinnerPower(0.0);
+            action = SorterAction.IDLE;
+            return;
+        }
 
-            // Drive spinner slowly so slots pass under the load station
-            setSpinnerPower(0.3);
+        // Drive spinner slowly so slots pass under the load station
+        setSpinnerPower(0.1);
 
-            // Reuse the same pass-based observation system already used in IDLE mode
-            updateIdleObservation();
+        double currentAngle = getCurrentSpinnerAngle();
 
-            // Check if inventory is now fully known (scan complete)
-            boolean allKnown = true;
-            for (SlotContent slot : slots) {
-                if (slot == SlotContent.UNKNOWN) {
-                    allKnown = false;
-                    break;
-                }
-            }
+        int currentSlot = (int) Math.floor(currentAngle / DEGREES_PER_SLOT);
+        currentSlot = ((currentSlot % SLOT_COUNT) + SLOT_COUNT) % SLOT_COUNT;
 
-            // If everything is known, stop scanning
-            if (allKnown) {
-                setSpinnerPower(0.0);
-                action = SorterAction.IDLE;
-            }
+        // start first pass
+        if (!slotPassActive) {
+            beginSlotPass(currentSlot);
+            loadStationObserver.sampleSlotPass(clock);
+            return;
+        }
 
-        // TODO: implement inventory-scan state machine.
+        // keep sampling while still on the same slot
+        if (currentSlot == activePassSlot) {
+            loadStationObserver.sampleSlotPass(clock);
+            return;
+        }
+
+        // moved into new slot, so finish old one
+        endSlotPass();
+
+        // stop if 3 slots were already scanned
+        if (completedScanPasses >= SLOT_COUNT) {
+            setSpinnerPower(0.0);
+            action = SorterAction.IDLE;
+            return;
+        }
+
+        // Otherwise begin next slot
+        beginSlotPass(currentSlot);
+        loadStationObserver.sampleSlotPass(clock);
     }
 
     /**
@@ -583,38 +653,28 @@ import edu.ftcphoenix.fw.core.time.LoopClock;
      */
     private void updatePrepareLoad() {
 
+        if (targetSlot < 0) {
+            setSpinnerPower(0.0);
+            action = SorterAction.IDLE;
+            return;
+        }
 
+        double currentAngle = getCurrentSpinnerAngle();
+        double error = wrapDegrees(targetAngle - currentAngle);
 
-            // must have valid slot chosen at LOAD  moves known empty slot to load station
-            if (loadSlot < 0) return;
+        if (Math.abs(error) < 5.0) {
+            setSpinnerPower(0.0);
 
-            // optional safety: only run in correct state
-            if (action != SorterAction.PREPARING_LOAD) return;
+            loadSlot = targetSlot;
+            loadAligned = true;
 
-            double currentAngle = getCurrentSpinnerAngle();
+            // finished preparing load
+            targetSlot = -1;
+            action = SorterAction.IDLE;
 
-            // target angle for load station slot
-            double targetAngle = getAngleForSlot(loadSlot);
-
-            double error = targetAngle - currentAngle;
-
-            // wrap correction (IMPORTANT for correctness)
-            error = (error + 180) % 360 - 180;
-
-            if (Math.abs(error) < 1.0) {
-
-                setSpinnerPower(0.0);
-
-                loadAligned = true;
-
-                // finished preparing load
-                action = SorterAction.IDLE;
-
-            } else {
-
-                double power = 0.3 * Math.signum(error);
-                setSpinnerPower(power);
-            }
+        } else {
+            setSpinnerPower(0.12 * Math.signum(error));
+        }
 
         // TODO: implement motion and completion rules for prepare-load.
 
@@ -638,12 +698,9 @@ import edu.ftcphoenix.fw.core.time.LoopClock;
         double currentAngle = getCurrentSpinnerAngle();//method below uses motor encoder to know encoder pos
 
         //calculate the error  (distance from target)
-        double error = targetAngle - currentAngle;
+        double error = wrapDegrees(targetAngle - currentAngle);
 
-          error = (error + 180) % 360 - 180;
-
-
-        if (Math.abs(error)<1.0) {
+        if (Math.abs(error) < 3.0) {
             setSpinnerPower(0.0);
             shootSlot = targetSlot;  //if distance to target less than  1 do these things
             shootAligned = true;
@@ -651,7 +708,7 @@ import edu.ftcphoenix.fw.core.time.LoopClock;
             action = SorterAction.IDLE;
         }
         else{
-            double power =0.3 * Math.signum (error);
+            double power = 0.12 * Math.signum (error);
               setSpinnerPower(power);
               //spin to target
 
@@ -668,7 +725,13 @@ import edu.ftcphoenix.fw.core.time.LoopClock;
         return slotIndex * 360.0 / SLOT_COUNT;
     }
 
+    private double getLoadAngleForSlot(int slotIndex) {
+        return getAngleForSlot(slotIndex) + LOAD_STATION_OFFSET_DEG;
+    }
 
+    private double getShootAngleForSlot(int slotIndex) {
+        return getAngleForSlot(slotIndex) + SHOOT_STATION_OFFSET_DEG;
+    }
 
 
     private double getCurrentSpinnerAngle() {
@@ -687,41 +750,40 @@ import edu.ftcphoenix.fw.core.time.LoopClock;
      * slot is still deferred to {@link #confirmShotComplete()}.
      */
     private void updateFeedCycle() {
-        // TODO: implement feed timing/state machine.
 
-            if (!isCalibrated()) {
-                setSpinnerPower(0.0);
-                action = SorterAction.IDLE;
-                return;
-            }
+        if (!isCalibrated()) {
+            setSpinnerPower(0.0);
+            action = SorterAction.IDLE;
+            return;
+        }
 
-            if (action != SorterAction.FEEDING) {
-                setSpinnerPower(0.0);
-                return;
-            }
+        if (action != SorterAction.FEEDING) {
+            setSpinnerPower(0.0);
+            return;
+        }
 
-            if (shootSlot < 0) {
-                setSpinnerPower(0.0);
-                action = SorterAction.IDLE;
-                return;
-            }
+        if (shootSlot < 0) {
+            setSpinnerPower(0.0);
+            action = SorterAction.IDLE;
+            return;
+        }
 
-            double currentAngle = getCurrentSpinnerAngle();
-            double targetAngle = getAngleForSlot(shootSlot);
+        double currentAngle = getCurrentSpinnerAngle();
+        double targetAngle = getShootAngleForSlot(shootSlot);
 
-            double error = targetAngle - currentAngle;
-            error = (error + 180) % 360 - 180;
+        double error = targetAngle - currentAngle;
+        error = (error + 180) % 360 - 180;
 
-            // Phase 1: align to slot
-            if (Math.abs(error) > 1.0) {
-                setSpinnerPower(0.3 * Math.signum(error));
-                return;
-            }
+        // Phase 1: align to slot
+        if (Math.abs(error) > 1.0) {
+            setSpinnerPower(0.1 * Math.signum(error));
+            return;
+        }
 
-            // Phase 2: push forward slightly to feed
-            setSpinnerPower(0.25);
+        // Phase 2: push forward slightly to feed
+        setSpinnerPower(0.1);
 
-            // stay in feeding until confirmShotComplete()
+        // stay in feeding until confirmShotComplete()
 
 
     }
@@ -744,6 +806,7 @@ import edu.ftcphoenix.fw.core.time.LoopClock;
             // START PASS (no sampling yet)
             if (!slotPassActive) {
                 beginSlotPass(currentSlot);
+                loadStationObserver.sampleSlotPass(clock);
                 return;
             }
 
@@ -753,9 +816,9 @@ import edu.ftcphoenix.fw.core.time.LoopClock;
                 return;
             }
 
-            // SWITCH SLOTw
             endSlotPass();
             beginSlotPass(currentSlot);
+            loadStationObserver.sampleSlotPass(clock);
 
         }
         // TODO: implement passive read-pass handling during normal loading.
@@ -810,6 +873,40 @@ import edu.ftcphoenix.fw.core.time.LoopClock;
         applyReadResult(result);
         slotPassActive = false;
         activePassSlot = -1;
+
+        if (action == SorterAction.INVENTORY_SCANNING) {
+            completedScanPasses++;
+        }
+    }
+
+    public int getDebugCompletedScanPasses() {
+        return completedScanPasses;
+    }
+
+    public boolean isDebugSlotPassActive() {
+        return slotPassActive;
+    }
+
+    public int getDebugActivePassSlot() {
+        return activePassSlot;
+    }
+
+    public int getDebugSpinnerTicks() {
+        return spinnerMotor.getCurrentPosition();
+    }
+
+    public double getDebugCurrentAngle() {
+        return getCurrentSpinnerAngle();
+    }
+
+    public int getDebugCurrentSlot() {
+        double currentAngle = getCurrentSpinnerAngle();
+        int currentSlot = (int) Math.floor(currentAngle / DEGREES_PER_SLOT);
+        return ((currentSlot % SLOT_COUNT) + SLOT_COUNT) % SLOT_COUNT;
+    }
+
+    public double getDebugSpinnerPower() {
+        return spinnerMotor.getPower();
     }
 
     /**
@@ -823,5 +920,6 @@ import edu.ftcphoenix.fw.core.time.LoopClock;
             throw new IllegalArgumentException("slotIndex must be in the range 0..2");
         }
     }
+
 }
 

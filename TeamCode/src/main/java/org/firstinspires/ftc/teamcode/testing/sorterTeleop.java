@@ -1,5 +1,6 @@
 package org.firstinspires.ftc.teamcode.testing;
 
+import com.qualcomm.robotcore.eventloop.opmode.Disabled;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 
@@ -13,6 +14,7 @@ import edu.ftcphoenix.fw.input.binding.Bindings;
 
 
 
+@Disabled
 @TeleOp(name = "Sorter Test Teleop ", group = "Sorter")
 public final class sorterTeleop extends OpMode {
 
@@ -30,7 +32,7 @@ public final class sorterTeleop extends OpMode {
         gamepads = Gamepads.create(gamepad1, gamepad2);
         bindings = new Bindings();
 
-        sorter = new SorterImpl(hardwareMap);
+        sorter = new SorterImpl(hardwareMap, clock);
 
         //gamepasd controls bindings.rise makes it press continously
 
@@ -59,11 +61,11 @@ public final class sorterTeleop extends OpMode {
         // 1) Clock (IMPORTANT for observer timing)
         clock.update(getRuntime());
 
-        // 2) Update sorter (this runs EVERYTHING)
-        sorter.update();
-
         // 3) Handle button edges
         bindings.update(clock);
+
+        // 2) Update sorter (this runs EVERYTHING)
+        sorter.update();
 
         // 4) Telemetry
         renderTelemetry();
